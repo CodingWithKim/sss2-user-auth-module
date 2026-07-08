@@ -7,9 +7,9 @@ class User(Base):
     """
     The core user record. Every registered account maps to one row here.
 
-    Note on 'hashed_password': the column is deliberately named this way even though
-    v1 stores plaintext. This avoids a schema migration when v2 introduces real hashing —
-    we only change what we write into the column, not the column's name.
+    'hashed_password' stores a bcrypt hash — the column name was chosen from the start
+    so that upgrading from plaintext (v1) to real hashing (v2) required no schema migration,
+    only a change to what gets written into it.
     """
     __tablename__ = "users"
 
@@ -17,7 +17,7 @@ class User(Base):
     username = Column(String, unique=True, nullable=False, index=True)
     email = Column(String, unique=True, nullable=False, index=True)
 
-    # SECURITY DEBT: storing plaintext in v1 — will be replaced with bcrypt hash in v2.
+    # Stores a bcrypt hash — never the raw password. ASVS V2.4.1.
     hashed_password = Column(String, nullable=False)
 
     # 'customer' is the least-privileged role; admins will be seeded separately.

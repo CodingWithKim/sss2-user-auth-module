@@ -14,7 +14,8 @@ class UserRegister(BaseModel):
     password: str
 
     # ASVS V2.1.1 — passwords must meet minimum complexity so they resist
-    # dictionary attacks even before we add proper hashing in v2.
+    # dictionary attacks. Combined with bcrypt storage in v2, weak passwords
+    # are rejected before they ever reach the database.
     @field_validator("password")
     @classmethod
     def password_strength(cls, v: str) -> str:
@@ -37,7 +38,31 @@ class UserRegister(BaseModel):
 class UserLogin(BaseModel):
     """
     Request body for POST /login.
-    Kept intentionally minimal — v1 only needs credentials, no token machinery yet.
+    The request shape is intentionally unchanged from v1 — only what the server
+    does with these credentials has changed (bcrypt verify + dual-token response).
     """
     username: str
     password: str
+
+
+class TokenResponse(BaseModel):
+    """
+    V2 ADDED: Response shape for POST /login and POST /token/refresh.
+    Only the access token travels in the JSON body — the refresh token is set
+    as an HttpOnly cookie by the route handler and never appears here.
+    """
+    access_token: str
+    token_type: str = "bearer"
+
+
+class UserResponse(BaseModel):
+    """
+    V2 ADDED: Safe public representation of a User — deliberately excludes
+    hashed_password, created_at, and any other fields we don't want clients to see.
+    """
+    id: int
+    username: str
+    email: str
+    role: str
+
+    model_config = {"from_attributes": True}
