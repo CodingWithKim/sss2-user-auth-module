@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from fastapi import FastAPI, Depends, HTTPException, status, Request, Response
 from sqlalchemy.orm import Session
 
@@ -11,6 +12,8 @@ from app.auth import (
     create_refresh_token,
     decode_token,
     get_current_user,
+    blacklist_token,
+    is_token_blacklisted,
 )
 
 # Create all database tables on startup if they don't exist yet.
@@ -20,8 +23,8 @@ models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title="Secure Auth API",
-    description="User authentication module — v2: bcrypt hashing + JWT dual-token.",
-    version="2.0.0",
+    description="User authentication module — v3: token blacklist + refresh rotation + input validation.",
+    version="3.0.0",
 )
 
 
@@ -32,8 +35,7 @@ def register(user_data: UserRegister, db: Session = Depends(get_db)):
 
     Checks for duplicate username/email first so we return a clean 409
     rather than letting the database raise a unique-constraint error (which
-    would bubble up as a confusing 500).
-    NEW: password is now hashed with bcrypt before being stored.
+    would bubble up as a confusing 500). Password is bcrypt-hashed before storage.
     """
     # Check if username is already taken
     existing_username = db.query(models.User).filter(
@@ -133,11 +135,13 @@ def profile(current_user: models.User = Depends(get_current_user)):
 
 
 @app.post("/token/refresh", response_model=TokenResponse)
-def refresh_token(request: Request):
+def refresh_token(request: Request, response: Response, db: Session = Depends(get_db)):
     """
     V2 ADDED: Issue a new access token using the refresh token stored in the
     HttpOnly cookie. The client never touches the refresh token directly —
     the browser just sends the cookie automatically with every request to this URL.
+    NEW: now checks the blacklist before issuing, and immediately blacklists the
+    old refresh token after rotation so it can't be reused. ASVS V3.3.3.
     """
     token = request.cookies.get("refresh_token")
     if not token:
@@ -157,19 +161,56 @@ def refresh_token(request: Request):
             detail="Invalid token type",
         )
 
+    jti = payload.get("jti")
+
+    # V3 ADDED: Reject the token if it was already used or explicitly revoked.
+    # This blocks parallel session reuse — if an attacker captured the refresh token
+    # and tries to use it after the legitimate user already rotated it, they get a 401.
+    if jti and is_token_blacklisted(jti, db):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token has been revoked",
+        )
+
     username = payload.get("sub")
     new_access_token = create_access_token(data={"sub": username})
+    new_refresh_token = create_refresh_token(data={"sub": username})
+
+    # V3 ADDED: Blacklist the old refresh token immediately after issuing a new one.
+    # ASVS V3.3.3 — rotation means each refresh token is single-use.
+    if jti:
+        expires_at = datetime.fromtimestamp(payload.get("exp"), tz=timezone.utc)
+        blacklist_token(jti, expires_at, db)
+
+    response.set_cookie(
+        key="refresh_token",
+        value=new_refresh_token,
+        httponly=True,
+        secure=True,
+        samesite="strict",
+    )
 
     return TokenResponse(access_token=new_access_token)
 
 
 @app.post("/logout")
-def logout(response: Response):
+def logout(request: Request, response: Response, db: Session = Depends(get_db)):
     """
     V2 ADDED: Clear the refresh token cookie from the browser.
-    Note: this only removes the cookie on the client side. If someone already
-    captured the refresh token string, it remains valid until expiry — server-side
-    blacklisting is the fix, and it's coming in v3.
+    NEW: now also blacklists the refresh token server-side, so even a captured
+    token string becomes useless immediately after logout. ASVS V3.3.1.
     """
+    token = request.cookies.get("refresh_token")
+    if token:
+        payload = decode_token(token)
+        jti = payload.get("jti")
+
+        # V3 ADDED: Blacklist the token before deleting the cookie — this is the key
+        # improvement over v2. The cookie deletion handles the browser; the blacklist
+        # handles anyone who may have copied the raw token string.
+        if jti and not is_token_blacklisted(jti, db):
+            expires_at = datetime.fromtimestamp(payload.get("exp"), tz=timezone.utc)
+            blacklist_token(jti, expires_at, db)
+
     response.delete_cookie("refresh_token")
     return {"message": "Logged out successfully"}

@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
 class UserRegister(BaseModel):
@@ -8,8 +8,13 @@ class UserRegister(BaseModel):
     The password validator runs before the data reaches the route handler,
     so the database never sees a weak password. This is an early-exit pattern —
     fail fast, fail cheap.
+    NEW: username now enforces a strict regex pattern that rejects SQL metacharacters
+    and script injection attempts at the schema layer. ASVS V5.1.3.
     """
-    username: str
+    # V3 ADDED: pattern rejects anything outside alphanumeric + underscore, so characters
+    # like ', ", --, ; that are used in SQL injection payloads never reach the DB query.
+    # ASVS V5.1.3 — input validation rejects metacharacters at the boundary.
+    username: str = Field(..., pattern=r'^[a-zA-Z0-9_]{3,30}$')
     email: EmailStr
     password: str
 

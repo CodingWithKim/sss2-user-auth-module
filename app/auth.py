@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 import os
+import uuid
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -63,14 +64,45 @@ def create_refresh_token(data: dict) -> str:
     issue new access tokens. Keeping it separate from the access token means we
     can revoke sessions without forcing the user to log in every 15 minutes.
     ASVS V3.2.1 — token carries an 'exp' claim.
-    # ASVS V3.3.1 — note: this token is not yet tracked server-side; logout only
-    # clears the browser cookie. A captured token stays valid until expiry.
-    # Server-side blacklisting is added in v3.
+    NEW: token now embeds a unique 'jti' claim so it can be individually blacklisted
+    on logout or rotation. ASVS V3.3.1.
     """
     payload = data.copy()
     expire = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
-    payload.update({"exp": expire, "type": "refresh"})
+    # V3 ADDED: jti (JWT ID) makes every token uniquely identifiable, which is what
+    # allows us to invalidate a specific token without touching any others.
+    payload.update({"exp": expire, "type": "refresh", "jti": generate_jti()})
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def generate_jti() -> str:
+    """
+    V3 ADDED: Generate a random unique ID to embed in every refresh token.
+    uuid4 gives us 122 bits of randomness — collision probability is negligible.
+    """
+    return uuid.uuid4().hex
+
+
+def blacklist_token(jti: str, expires_at: datetime, db: Session) -> None:
+    """
+    V3 ADDED: Insert a revoked token's jti into the blacklist table so subsequent
+    requests carrying that token are rejected even if it hasn't expired yet.
+    ASVS V3.3.1 — server-side session invalidation.
+    """
+    entry = models.TokenBlacklist(jti=jti, expires_at=expires_at)
+    db.add(entry)
+    db.commit()
+
+
+def is_token_blacklisted(jti: str, db: Session) -> bool:
+    """
+    V3 ADDED: Check whether a token's jti has been revoked. Called on every
+    /token/refresh and /logout attempt before doing anything else.
+    The jti column is indexed so this lookup stays fast even with many rows.
+    """
+    return db.query(models.TokenBlacklist).filter(
+        models.TokenBlacklist.jti == jti
+    ).first() is not None
 
 
 def decode_token(token: str) -> dict:

@@ -26,3 +26,23 @@ class User(Base):
     # server_default lets the DB engine set this, so it's always populated even if
     # the application layer forgets to pass a value.
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class TokenBlacklist(Base):
+    """
+    V3 ADDED: Tracks revoked refresh tokens so that logout is truly terminal.
+    In v2, logout only cleared the browser cookie — a captured token string
+    remained valid until expiry. This table closes that gap.
+    ASVS V3.3.1 — server-side session invalidation.
+    """
+    __tablename__ = "token_blacklist"
+
+    id = Column(Integer, primary_key=True)
+
+    # jti (JWT ID) is a unique identifier embedded in every token we issue.
+    # Indexed for fast lookups on every authenticated request.
+    jti = Column(String, unique=True, nullable=False, index=True)
+
+    # We store the expiry so a background cleanup job can prune stale rows later
+    # without needing to decode the token again.
+    expires_at = Column(DateTime, nullable=False)
