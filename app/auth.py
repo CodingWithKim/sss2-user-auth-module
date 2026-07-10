@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 import os
 import uuid
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -146,3 +146,32 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(http_be
         )
 
     return user
+
+
+def require_role(*allowed_roles: str):
+    """
+    V4 ADDED: Factory that returns a FastAPI dependency enforcing role-based access.
+    Usage: Depends(require_role("admin")) or Depends(require_role("admin", "support")).
+
+    Deny-by-default means any role not explicitly listed is rejected with a 403,
+    so forgetting to add a role restriction is safe — it just blocks everyone until
+    you wire it up. ASVS V4.1.1/4.1.3.
+    """
+    def dependency(request: Request, current_user: models.User = Depends(get_current_user)) -> models.User:
+        if current_user.role not in allowed_roles:
+            # V4 ADDED: Log the attempt before raising — we want a trail even for
+            # blocked requests. The attacker doesn't get a reason; we do.
+            # ASVS V4.1.3 — deny by default, log the attempt.
+            from app.logger import log_event
+            log_event(
+                event_type="unauthorized_access_attempt",
+                username=current_user.username,
+                ip=request.client.host if request.client else "unknown",
+                outcome="denied",
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Insufficient permissions",
+            )
+        return current_user
+    return dependency
