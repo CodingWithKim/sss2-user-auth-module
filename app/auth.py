@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 import os
+from typing import Optional
 import uuid
 
 from fastapi import Depends, HTTPException, Request, status
@@ -20,7 +21,11 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 # We use this instead of OAuth2PasswordBearer because our /login accepts JSON,
 # not form data — OAuth2PasswordBearer's Swagger flow sends form data and would
 # cause a 422 mismatch.
-http_bearer = HTTPBearer()
+# V5 ADDED: auto_error=False disables the built-in 403 that FastAPI raises for a
+# missing Authorization header. RFC 7235 says a missing credential is a 401, not
+# 403 — 403 means "authenticated but not allowed". We raise the correct 401 ourselves
+# in get_current_user() below. ASVS V4.1.1 — fail-safe defaults.
+http_bearer = HTTPBearer(auto_error=False)
 
 # V2 ADDED: Pull JWT settings from .env so we never hardcode secrets in source code.
 SECRET_KEY = os.getenv("SECRET_KEY", "fallback-dev-key-change-in-production")
@@ -122,12 +127,25 @@ def decode_token(token: str) -> dict:
         )
 
 
-def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(http_bearer), db: Session = Depends(get_db)):
+def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] = Depends(http_bearer), db: Session = Depends(get_db)):
     """
     V2 ADDED: FastAPI dependency that extracts and validates the Bearer token from
     the Authorization header, then loads and returns the matching User from the DB.
     Any route that uses Depends(get_current_user) is effectively a protected endpoint.
+    V5 ADDED: credentials is now Optional because http_bearer uses auto_error=False.
+    Missing or malformed Authorization headers raise 401 (not 403) per RFC 7235.
+    ASVS V4.1.1 — any failure path denies access; no path can accidentally grant it.
     """
+    # credentials is None when the Authorization header is absent entirely.
+    # Raising 401 here (not 403) matches RFC 7235: 401 = "you haven't identified
+    # yourself", 403 = "I know who you are but you're not allowed".
+    if credentials is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     token = credentials.credentials
     payload = decode_token(token)
 
@@ -158,7 +176,11 @@ def require_role(*allowed_roles: str):
     you wire it up. ASVS V4.1.1/4.1.3.
     """
     def dependency(request: Request, current_user: models.User = Depends(get_current_user)) -> models.User:
-        if current_user.role not in allowed_roles:
+        # V5 ADDED: Treat a missing or unexpected role as a denial, not an exception.
+        # The `not current_user.role` guard is the fail-safe: if a row somehow lands
+        # in the DB with role=NULL, the outcome is a 403, not an unhandled AttributeError
+        # and certainly not accidental access. ASVS V4.1.1 — errors default to denial.
+        if not current_user.role or current_user.role not in allowed_roles:
             # V4 ADDED: Log the attempt before raising — we want a trail even for
             # blocked requests. The attacker doesn't get a reason; we do.
             # ASVS V4.1.3 — deny by default, log the attempt.
@@ -168,6 +190,10 @@ def require_role(*allowed_roles: str):
                 username=current_user.username,
                 ip=request.client.host if request.client else "unknown",
                 outcome="denied",
+                role=current_user.role or "none",
+                route=request.url.path,
+                method=request.method,
+                http_status=403,
             )
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,

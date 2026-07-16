@@ -1,6 +1,8 @@
 from datetime import datetime, timezone
 from fastapi import FastAPI, Depends, HTTPException, Request, Response, status
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -20,7 +22,7 @@ from app.auth import (
     is_token_blacklisted,
     require_role,
 )
-from app.logger import log_event
+from app.logger import log_event, get_recent_logs
 
 # Create all database tables on startup if they don't exist yet.
 # In production you'd typically use Alembic migrations instead, but
@@ -34,12 +36,23 @@ limiter = Limiter(key_func=get_remote_address)
 
 app = FastAPI(
     title="Secure Auth API",
-    description="User authentication module — v4: RBAC + rate limiting + audit logging + error hardening.",
-    version="4.0.0",
+    description="User authentication module — v5: frontend demo + CORS + abuse-case tests.",
+    version="5.0.0",
 )
 
 # V4 ADDED: Attach the limiter to the app state so slowapi's middleware can find it.
 app.state.limiter = limiter
+
+# V5 ADDED: CORSMiddleware allows the frontend (served from the same origin) to send
+# credentialed requests. allow_credentials=True is required for the browser to include
+# the HttpOnly refresh_token cookie on /token/refresh calls.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:8000", "http://127.0.0.1:8000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 # V4 ADDED: Catch slowapi's RateLimitExceeded and return a clean 429 response.
@@ -93,10 +106,13 @@ def register(user_data: UserRegister, db: Session = Depends(get_db)):
 
     # Password is hashed by hash_password() before hitting the DB — the raw string
     # never gets written anywhere. ASVS V2.4.1.
+    # V5 ADDED: role is now taken from the request body (validated by Pydantic Literal)
+    # rather than always defaulting to 'customer'.
     new_user = models.User(
         username=user_data.username,
         email=user_data.email,
         hashed_password=hash_password(user_data.password),
+        role=user_data.role,
     )
 
     db.add(new_user)
@@ -132,7 +148,8 @@ def login(request: Request, credentials: UserLogin, response: Response, db: Sess
         # Return the same message for wrong username vs wrong password so we
         # don't leak which one failed (user enumeration prevention).
         # V4 ADDED: Log failed attempts — repeated failures from one IP are a brute-force signal.
-        log_event("login_failure", credentials.username, ip, "user_not_found")
+        log_event("login_failure", credentials.username, ip, "user_not_found",
+                  route="/login", method="POST", http_status=401)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password"
@@ -142,7 +159,8 @@ def login(request: Request, credentials: UserLogin, response: Response, db: Sess
     if not verify_password(credentials.password, user.hashed_password):
         # V4 ADDED: Log wrong-password failures separately from user-not-found
         # so we can distinguish credential stuffing from username enumeration in the logs.
-        log_event("login_failure", credentials.username, ip, "wrong_password")
+        log_event("login_failure", credentials.username, ip, "wrong_password",
+                  route="/login", method="POST", http_status=401)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password"
@@ -166,7 +184,8 @@ def login(request: Request, credentials: UserLogin, response: Response, db: Sess
 
     # V4 ADDED: Successful logins are just as important to log as failures —
     # they establish the baseline of normal activity for anomaly detection.
-    log_event("login_success", user.username, ip, "success")
+    log_event("login_success", user.username, ip, "success",
+              role=user.role, route="/login", method="POST", http_status=200)
 
     return TokenResponse(access_token=access_token)
 
@@ -214,10 +233,20 @@ def refresh_token(request: Request, response: Response, db: Session = Depends(ge
 
     jti = payload.get("jti")
 
+    # V5 ADDED: Reject tokens that have no jti claim at all. Every refresh token we
+    # issue includes a jti (added in v3), so a token without one is either very old
+    # or forged. Accepting it would silently bypass the entire blacklist check, which
+    # would mean logout doesn't actually work for those tokens. Fail-safe: reject it.
+    if not jti:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token is missing required jti claim",
+        )
+
     # Reject the token if it was already used or explicitly revoked.
     # This blocks parallel session reuse — if an attacker captured the refresh token
     # and tries to use it after the legitimate user already rotated it, they get a 401.
-    if jti and is_token_blacklisted(jti, db):
+    if is_token_blacklisted(jti, db):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Refresh token has been revoked",
@@ -228,10 +257,10 @@ def refresh_token(request: Request, response: Response, db: Session = Depends(ge
     new_refresh_token = create_refresh_token(data={"sub": username})
 
     # Blacklist the old refresh token immediately after issuing a new one.
+    # jti is guaranteed non-None at this point (we raised above if it was missing).
     # ASVS V3.3.3 — rotation means each refresh token is single-use.
-    if jti:
-        expires_at = datetime.fromtimestamp(payload.get("exp"), tz=timezone.utc)
-        blacklist_token(jti, expires_at, db)
+    expires_at = datetime.fromtimestamp(payload.get("exp"), tz=timezone.utc)
+    blacklist_token(jti, expires_at, db)
 
     response.set_cookie(
         key="refresh_token",
@@ -243,7 +272,11 @@ def refresh_token(request: Request, response: Response, db: Session = Depends(ge
 
     # V4 ADDED: Log successful token refreshes — a spike in refresh activity from
     # one IP can indicate token theft or session hijacking attempts.
-    log_event("token_refresh", username, ip, "success")
+    # Look up the user's role so the audit row has the full picture.
+    user_record = db.query(models.User).filter(models.User.username == username).first()
+    log_event("token_refresh", username, ip, "success",
+              role=user_record.role if user_record else None,
+              route="/token/refresh", method="POST", http_status=200)
 
     return TokenResponse(access_token=new_access_token)
 
@@ -275,7 +308,10 @@ def logout(request: Request, response: Response, db: Session = Depends(get_db)):
 
     # V4 ADDED: Log logouts so we can correlate them with subsequent suspicious activity
     # (e.g. a refresh attempt right after a logout is a red flag).
-    log_event("logout", username, ip, "success")
+    user_record = db.query(models.User).filter(models.User.username == username).first()
+    log_event("logout", username, ip, "success",
+              role=user_record.role if user_record else None,
+              route="/logout", method="POST", http_status=200)
 
     return {"message": "Logged out successfully"}
 
@@ -305,3 +341,28 @@ def support_users(current_user: models.User = Depends(require_role("admin", "sup
         "message": f"User list accessed by {current_user.username} ({current_user.role})",
         "users": users,
     }
+
+
+@app.get("/admin/audit-log")
+def audit_log(
+    current_user: models.User = Depends(require_role("admin")),
+    db: Session = Depends(get_db),
+):
+    """
+    V5 ADDED: Returns the 100 most recent security events from the persistent
+    audit_log table, newest first.
+    Admin-only — regular users and support staff have no business seeing auth logs.
+    Backed by SQLite, so events survive server restarts — unlike the old in-memory
+    buffer which was cleared on every uvicorn reload.
+    """
+    return {
+        "requested_by": current_user.username,
+        "logs": get_recent_logs(db),
+    }
+
+
+# V5 ADDED: Serve the frontend SPA from the /frontend directory.
+# This mount MUST come last — FastAPI matches routes top-to-bottom, so API routes
+# declared above take priority. If StaticFiles were mounted first, it would swallow
+# all requests before the API handlers could run.
+app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
