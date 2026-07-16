@@ -71,6 +71,8 @@ python -m uvicorn app.main:app --reload
 
 > **Note on `.env`:** This step is optional for local development — the server falls back to a hardcoded dev key if `.env` is missing. Never deploy with the default `SECRET_KEY`; always replace it with a strong random value in any non-local environment.
 
+> **Windows note**: If `python` is not recognised, use `py` instead (e.g. `py -m venv venv`).
+
 ---
 
 ## Environment Variables
