@@ -1,3 +1,4 @@
+from typing import Literal
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
@@ -17,6 +18,12 @@ class UserRegister(BaseModel):
     username: str = Field(..., pattern=r'^[a-zA-Z0-9_]{3,30}$')
     email: EmailStr
     password: str
+
+    # V5 ADDED: Optional role selection at registration time. Defaults to 'customer'
+    # so existing clients that don't send this field are unaffected.
+    # Literal enforces the allowed set — any other value is rejected with a 422
+    # before the route handler even runs.
+    role: Literal["customer", "support", "admin"] = "customer"
 
     # ASVS V2.1.1 — passwords must meet minimum complexity so they resist
     # dictionary attacks. Combined with bcrypt storage in v2, weak passwords
