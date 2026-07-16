@@ -150,20 +150,20 @@ The script runs five scenarios in a fixed order (brute force always last so the 
 
 ---
 
-## ASVS Compliance Summary
+## ASVS 5.0.0 Compliance Summary
 
-| # | ASVS Requirement | Implemented in | Version |
+| # | ASVS 5.0.0 Requirement | Implemented in | Branch |
 |---|---|---|---|
-| 1 | V2.1.1 — Password length and complexity | `schemas.py` `UserRegister` validator | v1 |
-| 2 | V2.4.1 — Bcrypt for credential storage | `auth.py` `hash_password()` | v2 |
-| 3 | V3.4.2/3/5 — HttpOnly, Secure, SameSite cookie | `main.py` `/login` `set_cookie()` | v2 |
-| 4 | V3.2.1 — Tokens carry expiry claim | `auth.py` `create_*_token()` | v2 |
-| 5 | V3.3.1 — Server-side session invalidation | `auth.py` blacklist + `/logout` | v3 |
-| 6 | V3.3.3 — Refresh token rotation | `main.py` `/token/refresh` | v3 |
-| 7 | V5.1.3 — Input validation rejects metacharacters | `schemas.py` username regex | v3 |
-| 8 | V4.1.1/3 — Access control on every request, deny-by-default | `auth.py` `require_role()` | v4 |
-| 9 | V7.1.1/2 — Audit log, no credentials logged | `logger.py` `log_event()` | v4 |
-| 10 | V1.7.2 — Generic error responses (no stack traces) | `main.py` global exception handler | v4 |
-| 11 | V4.1.1 — Fail-safe defaults: 401 for missing auth; jti-absent tokens rejected | `auth.py` `get_current_user()` + `main.py` `/token/refresh` | v5 |
-| 12 | V1.7.2 — Append-only audit trail (no DELETE/UPDATE on `audit_log`) | `models.py` `AuditLog` + `logger.py` `_write_to_db()` | v5 |
-| 13 | V7.1.1 — Rich audit context (route/method/role/http_status, zero PII) | `logger.py` `log_event()` | v5 |
+| 1 | **V6.2.1** — Password Security: passwords must be at least 8 characters in length | `schemas.py` `password_strength` validator | v1 |
+| 2 | **V9.1.1** — Token Source and Integrity: self-contained tokens validated using digital signature before accepting contents | `auth.py` `decode_access_token()` JWT verification | v2 |
+| 3 | **V9.1.2** — Token Source and Integrity: only allowlisted algorithms used; 'None' algorithm excluded | `auth.py` `ALGORITHM = "HS256"` | v2 |
+| 4 | **V9.2.1** — Token Content: token accepted only if verification time is within the validity timespan (`exp` / `nbf`) | `auth.py` `create_access_token()` with 15-minute `exp` claim | v2 |
+| 5 | **V3.3.1** — Cookie Setup: cookies have the `Secure` attribute set | `main.py` `/login` `set_cookie(secure=True)` | v2 |
+| 6 | **V3.3.2** — Cookie Setup: each cookie's `SameSite` attribute set according to the purpose of the cookie | `main.py` `/login` `set_cookie(samesite="strict")` | v2 |
+| 7 | **V3.3.4** — Cookie Setup: cookies not accessible to client-side scripts have the `HttpOnly` attribute set | `main.py` `/login` `set_cookie(httponly=True)` | v2 |
+| 8 | **V7.4.1** — Session Termination: when termination is triggered, the application disallows any further use of the session (blacklist for self-contained tokens) | `auth.py` `is_token_blacklisted()` + `main.py` `/logout` | v3 |
+| 9 | **V2.4.1** — Anti-automation: controls in place to protect against excessive calls to application functions | `main.py` slowapi rate limiter | v4 |
+| 10 | **V6.3.1** — General Authentication Security: controls to prevent credential stuffing and password brute force implemented | `main.py` slowapi (5 req/min/IP on `/login`) | v4 |
+| 11 | **V8.2.1** — General Authorization Design: function-level access restricted to consumers with explicit permissions | `auth.py` `require_role()` — deny-by-default | v4 |
+| 12 | **V8.3.1** — Operation Level Authorization: application enforces authorisation rules at a trusted service layer, not client-side | `auth.py` server-side `Depends(require_role(...))` | v4 |
+| 13 | **V3.4.2** — Browser Security Mechanism Headers: CORS `Access-Control-Allow-Origin` validated against an allowlist of trusted origins | `main.py` `CORSMiddleware(allow_origins=[...])` | v5 |
