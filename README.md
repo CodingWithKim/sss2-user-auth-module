@@ -142,11 +142,11 @@ The script runs five scenarios in a fixed order (brute force always last so the 
 
 | # | Test | Expected | ASVS |
 |---|------|----------|------|
-| 1 | SQL injection payload at `/register` | `422` | V5.1.3 |
-| 2 | Weak password (no uppercase / digit / symbol) | `422` | V2.1.1 |
-| 3 | Forged JWT token at `/profile` | `401` | V3.2.1 |
-| 4 | Customer token on `/admin/dashboard` | `403` | V4.1.1 |
-| 5 | 6 rapid login attempts (brute force) | `429` on 6th | V2.1 |
+| 1 | SQL injection payload at `/register` | `422` | V2.2 — Input Validation |
+| 2 | Weak password (no uppercase / digit / symbol) | `422` | V6.2.1 — Password Security |
+| 3 | Forged JWT token at `/profile` | `401` | V9.1.1 — Token Source and Integrity |
+| 4 | Customer token on `/admin/dashboard` | `403` | V8.2.1 — General Authorization Design |
+| 5 | 6 rapid login attempts (brute force) | `429` on 6th | V6.3.1 — General Authentication Security |
 
 ---
 

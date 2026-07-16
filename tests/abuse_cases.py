@@ -28,7 +28,7 @@ def test_sql_injection():
     Send a classic SQL injection payload as the username at /register.
     Pydantic's regex validator ([a-zA-Z0-9_]{3,30}) should reject it at
     the schema layer and return 422 — the DB query is never built.
-    ASVS V5.1.3.
+    ASVS V2.2 — Input Validation.
     """
     print("\n[1] SQL Injection")
 
@@ -47,7 +47,7 @@ def test_weak_password():
     Attempt to register with a password that fails the complexity rules
     (no uppercase, no digit, no special character).
     The Pydantic field_validator should return 422 before the user is created.
-    ASVS V2.1.1.
+    ASVS V6.2.1 — Password Security.
     """
     print("\n[2] Weak Password Rejection")
 
@@ -66,7 +66,7 @@ def test_invalid_token():
     Access a protected endpoint (/profile) with a forged Bearer token.
     The server verifies the HMAC-SHA256 signature — a single altered
     character makes the token invalid and must return 401 Unauthorised.
-    ASVS V3.2.1.
+    ASVS V9.1.1 — Token Source and Integrity.
     """
     print("\n[3] Invalid Token Access")
 
@@ -84,7 +84,7 @@ def test_privilege_escalation():
     """
     Log in as a customer, then attempt to access /admin/dashboard.
     RBAC (require_role) should deny it with 403 Forbidden — deny by default.
-    ASVS V4.1.1/4.1.3.
+    ASVS V8.2.1 / V8.3.1 — General Authorization Design / Operation Level Authorization.
     """
     print("\n[4] Privilege Escalation (RBAC)")
 
@@ -117,7 +117,7 @@ def test_brute_force():
     """
     Fire 6 rapid login attempts with wrong credentials.
     slowapi rate limiter (5 req/min/IP) should return 429 on the 6th attempt.
-    ASVS V2.1 (mitigates credential stuffing / brute-force attacks).
+    ASVS V6.3.1 — General Authentication Security (mitigates credential stuffing / brute-force attacks).
     """
     print("\n[5] Brute Force Attack")
     last_status = None

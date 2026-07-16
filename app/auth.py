@@ -13,8 +13,8 @@ from app.database import get_db
 from app import models
 
 # V2 ADDED: CryptContext tells passlib to use bcrypt as the hashing algorithm.
-# ASVS V2.4.1 — bcrypt is specifically recommended because it's slow by design,
-# which makes GPU-based brute-force attacks impractical even if the DB is leaked.
+# ASVS V6.2 — Password Security: bcrypt is an adaptive hashing function; its cost
+# factor makes GPU-based brute-force attacks impractical even if the DB is leaked.
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # V2 ADDED: HTTPBearer tells Swagger UI to show a simple token input field.
@@ -24,7 +24,7 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 # V5 ADDED: auto_error=False disables the built-in 403 that FastAPI raises for a
 # missing Authorization header. RFC 7235 says a missing credential is a 401, not
 # 403 — 403 means "authenticated but not allowed". We raise the correct 401 ourselves
-# in get_current_user() below. ASVS V4.1.1 — fail-safe defaults.
+# in get_current_user() below. ASVS V8.2.1 — General Authorization Design: fail-safe.
 http_bearer = HTTPBearer(auto_error=False)
 
 # V2 ADDED: Pull JWT settings from .env so we never hardcode secrets in source code.
@@ -55,7 +55,7 @@ def create_access_token(data: dict) -> str:
     """
     V2 ADDED: Sign a short-lived JWT for API access. The 15-minute window limits
     the blast radius if a token is intercepted — it becomes useless quickly.
-    ASVS V3.2.1 — token carries an 'exp' claim so it self-expires.
+    ASVS V9.2.1 — Token Content: token carries an 'exp' claim so it self-expires.
     """
     payload = data.copy()
     expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
@@ -68,9 +68,9 @@ def create_refresh_token(data: dict) -> str:
     V2 ADDED: Sign a longer-lived JWT stored in an HttpOnly cookie, used only to
     issue new access tokens. Keeping it separate from the access token means we
     can revoke sessions without forcing the user to log in every 15 minutes.
-    ASVS V3.2.1 — token carries an 'exp' claim.
+    ASVS V9.2.1 — Token Content: token carries an 'exp' claim.
     NEW: token now embeds a unique 'jti' claim so it can be individually blacklisted
-    on logout or rotation. ASVS V3.3.1.
+    on logout or rotation. ASVS V7.4.1 — Session Termination.
     """
     payload = data.copy()
     expire = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
@@ -92,7 +92,7 @@ def blacklist_token(jti: str, expires_at: datetime, db: Session) -> None:
     """
     V3 ADDED: Insert a revoked token's jti into the blacklist table so subsequent
     requests carrying that token are rejected even if it hasn't expired yet.
-    ASVS V3.3.1 — server-side session invalidation.
+    ASVS V7.4.1 — Session Termination: server-side invalidation of revoked tokens.
     """
     entry = models.TokenBlacklist(jti=jti, expires_at=expires_at)
     db.add(entry)
@@ -134,7 +134,7 @@ def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] = Depen
     Any route that uses Depends(get_current_user) is effectively a protected endpoint.
     V5 ADDED: credentials is now Optional because http_bearer uses auto_error=False.
     Missing or malformed Authorization headers raise 401 (not 403) per RFC 7235.
-    ASVS V4.1.1 — any failure path denies access; no path can accidentally grant it.
+    ASVS V8.2.1 — General Authorization Design: any failure path denies access.
     """
     # credentials is None when the Authorization header is absent entirely.
     # Raising 401 here (not 403) matches RFC 7235: 401 = "you haven't identified
@@ -173,7 +173,7 @@ def require_role(*allowed_roles: str):
 
     Deny-by-default means any role not explicitly listed is rejected with a 403,
     so forgetting to add a role restriction is safe — it just blocks everyone until
-    you wire it up. ASVS V4.1.1/4.1.3.
+    you wire it up. ASVS V8.2.1 / V8.3.1 — General Authorization Design / Operation Level Authorization.
     """
     def dependency(request: Request, current_user: models.User = Depends(get_current_user)) -> models.User:
         # V5 ADDED: Treat a missing or unexpected role as a denial, not an exception.
@@ -183,7 +183,7 @@ def require_role(*allowed_roles: str):
         if not current_user.role or current_user.role not in allowed_roles:
             # V4 ADDED: Log the attempt before raising — we want a trail even for
             # blocked requests. The attacker doesn't get a reason; we do.
-            # ASVS V4.1.3 — deny by default, log the attempt.
+            # ASVS V8.2.1 — General Authorization Design: deny by default, log the attempt.
             from app.logger import log_event
             log_event(
                 event_type="unauthorized_access_attempt",

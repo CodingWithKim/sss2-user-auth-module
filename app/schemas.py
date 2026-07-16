@@ -6,15 +6,14 @@ class UserRegister(BaseModel):
     """
     Request body for POST /register.
 
-    The password validator runs before the data reaches the route handler,
-    so the database never sees a weak password. This is an early-exit pattern —
-    fail fast, fail cheap.
-    NEW: username now enforces a strict regex pattern that rejects SQL metacharacters
-    and script injection attempts at the schema layer. ASVS V5.1.3.
+    Validators run before the data reaches the route handler, so the database
+    never sees a weak password or an injection payload. Fail fast, fail cheap.
+    Username enforces a strict regex that rejects SQL metacharacters at the schema
+    layer before any query is built. ASVS V2.2 — Input Validation.
     """
-    # V3 ADDED: pattern rejects anything outside alphanumeric + underscore, so characters
-    # like ', ", --, ; that are used in SQL injection payloads never reach the DB query.
-    # ASVS V5.1.3 — input validation rejects metacharacters at the boundary.
+    # Pattern rejects anything outside alphanumeric + underscore, so characters
+    # like ', ", --, ; used in SQL injection payloads never reach the DB.
+    # ASVS V2.2 — Input Validation: rejects metacharacters at the boundary.
     username: str = Field(..., pattern=r'^[a-zA-Z0-9_]{3,30}$')
     email: EmailStr
     password: str
@@ -25,7 +24,7 @@ class UserRegister(BaseModel):
     # before the route handler even runs.
     role: Literal["customer", "support", "admin"] = "customer"
 
-    # ASVS V2.1.1 — passwords must meet minimum complexity so they resist
+    # ASVS V6.2.1 — Password Security: passwords must meet minimum complexity so they resist
     # dictionary attacks. Combined with bcrypt storage in v2, weak passwords
     # are rejected before they ever reach the database.
     @field_validator("password")

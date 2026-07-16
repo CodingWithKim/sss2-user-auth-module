@@ -2,7 +2,7 @@
 // Storing a token in Web Storage exposes it to any injected script (XSS), because
 // JS on the same origin can read it freely. Memory-only means the token is gone the
 // moment the tab closes, and there's no persistent surface an attacker can harvest.
-// ASVS V3.4.2.
+// ASVS V3 — Web Frontend Security.
 let accessToken = null;
 let currentUser  = null;  // populated by fetchProfile() after a successful login
 
@@ -23,7 +23,7 @@ function switchTab(name) {
 function showMsg(text, type) {
     const el = document.getElementById('auth-msg');
     // Always use textContent here — the message may contain server-returned strings
-    // and we never want those interpreted as HTML. ASVS V5.3.3.
+    // and we never want those interpreted as HTML. ASVS V1 — Encoding and Sanitization.
     el.textContent = text;
     el.className = 'auth-msg show ' + type;
 }
@@ -104,7 +104,7 @@ async function doLogin() {
             // credentials: 'include' tells the browser to accept the Set-Cookie header
             // from /login so the HttpOnly refresh_token cookie is stored automatically.
             // Without this flag, same-origin credentialled responses are still sent
-            // but the cookie is silently dropped. ASVS V3.4.2/3/5.
+            // but the cookie is silently dropped. ASVS V3.3 — Cookie Setup.
             credentials: 'include',
             body:    JSON.stringify({ username, password }),
         });
@@ -166,7 +166,7 @@ async function doLogout() {
         // credentials: 'include' sends the HttpOnly cookie so the server can
         // blacklist the refresh token's jti immediately. Deleting the cookie on the
         // client alone is not enough — an attacker who copied the raw token string
-        // before logout could still use it without the server-side blacklist. ASVS V3.3.1.
+        // before logout could still use it without the server-side blacklist. ASVS V7.4.1 — Session Termination.
         await fetch('/logout', { method: 'POST', credentials: 'include' });
     } catch {
         // Network failure on logout is non-fatal — clear the local state regardless
@@ -219,7 +219,7 @@ const TESTS = [
         endpoint: 'GET /profile',
         desc: 'Sends the access token as a Bearer header. The server decodes and verifies the JWT, then returns the authenticated user\'s own data. Confirms the active session is valid.',
         expectedOutcome: '200 OK — user object (id, username, email, role)',
-        asvs: 'V3.2.1 — access tokens carry expiry claim',
+        asvs: 'V9.2.1 — Token Content: access tokens carry expiry claim',
         passLabel: '✓ Pass', failLabel: '✗ Unexpected Response',
         async run() {
             const res  = await fetch('/profile', {
@@ -235,14 +235,14 @@ const TESTS = [
         endpoint: 'POST /token/refresh',
         desc: 'The browser sends the HttpOnly refresh token cookie automatically — JS never reads the cookie value. A new short-lived access token is issued and replaces the old one in memory.',
         expectedOutcome: '200 OK — new access_token issued; in-memory token rotated',
-        asvs: 'V3.3.3 — refresh tokens are single-use (rotation)',
+        asvs: 'V7.4.1 — Session Termination: refresh tokens are single-use (rotation)',
         passLabel: '✓ Pass', failLabel: '✗ Unexpected Response',
         async run() {
             const res  = await fetch('/token/refresh', {
                 method:      'POST',
                 // The browser attaches the HttpOnly refresh_token cookie automatically
                 // when credentials is set to 'include'. JS cannot read the cookie value
-                // directly — it is opaque to the application layer. ASVS V3.4.2.
+                // directly — it is opaque to the application layer. ASVS V3.3.4 — Cookie Setup.
                 credentials: 'include',
             });
             const body = await res.json();
@@ -258,7 +258,7 @@ const TESTS = [
         endpoint: 'GET /admin/dashboard',
         desc: 'Access is restricted to the admin role only. Non-admin users receive 403 Forbidden regardless of whether they supply a valid token — the server enforces deny-by-default at the route level.',
         expectedOutcome: '200 Access Granted (admin) · 403 Forbidden (customer / support)',
-        asvs: 'V4.1.1 — access control enforced on every request, deny by default',
+        asvs: 'V8.2.1 — General Authorization Design: access control enforced on every request, deny by default',
         failLabel: '✗ Access Control Failed',
         async run() {
             const res  = await fetch('/admin/dashboard', {
@@ -280,7 +280,7 @@ const TESTS = [
         endpoint: 'GET /support/users',
         desc: 'Admin and support roles may access this endpoint; customers are blocked. Tests that a multi-role allow-list is enforced server-side and cannot be bypassed by the client.',
         expectedOutcome: '200 Access Granted (admin / support) · 403 Forbidden (customer)',
-        asvs: 'V4.1.1 — access control enforced on every request, deny by default',
+        asvs: 'V8.2.1 — General Authorization Design: access control enforced on every request, deny by default',
         failLabel: '✗ Access Control Failed',
         async run() {
             const res  = await fetch('/support/users', {
@@ -300,7 +300,7 @@ const TESTS = [
         endpoint: 'GET /admin/audit-log',
         desc: 'Security event logs must be visible to administrators only. Exposing them to lower-privileged roles would violate least-privilege and help an attacker understand the system\'s defences.',
         expectedOutcome: '200 Access Granted (admin) · 403 Forbidden (customer / support)',
-        asvs: 'V7.1.1 — security events are logged; V4.1.3 — least privilege enforced',
+        asvs: 'V16 — Security Logging and Error Handling; V8.3.1 — Operation Level Authorization',
         failLabel: '✗ Access Control Failed',
         async run() {
             const res  = await fetch('/admin/audit-log', {
@@ -320,7 +320,7 @@ const TESTS = [
         endpoint: 'GET /profile',
         desc: 'A manually crafted JWT with a fake HMAC-SHA256 signature is submitted as the Bearer token. Even a single altered character invalidates the signature — the server must reject the request without revealing internal details.',
         expectedOutcome: '401 Unauthorised — JWT signature verification fails',
-        asvs: 'V3.2.1 — tokens verified for signature and expiry on every request',
+        asvs: 'V9.1.1 — Token Source and Integrity: tokens verified for signature on every request',
         passLabel: '✓ Token Rejected', failLabel: '✗ Forged Token Accepted',
         async run() {
             // A structurally valid JWT (header.payload) but with a fabricated
@@ -339,7 +339,7 @@ const TESTS = [
         endpoint: 'POST /register',
         desc: "Sends the classic SQL injection payload ' OR '1'='1 as the username. Pydantic's regex validator [a-zA-Z0-9_]{3,30} rejects SQL metacharacters at the schema layer — the database query is never constructed.",
         expectedOutcome: '422 Unprocessable Entity — payload blocked at schema layer',
-        asvs: 'V5.1.3 — input validation rejects metacharacters at the boundary',
+        asvs: 'V2.2 — Input Validation: rejects metacharacters at the boundary',
         passLabel: '✓ Attack Blocked', failLabel: '✗ Injection Not Blocked',
         async run() {
             const res  = await fetch('/register', {
@@ -361,7 +361,7 @@ const TESTS = [
         endpoint: 'POST /login',
         desc: 'Fires 6 rapid login attempts with wrong credentials. The slowapi rate limiter (5 requests / minute / IP) must block at least one attempt with 429 Too Many Requests to mitigate credential stuffing. A 429 on attempt 1 from a prior run still counts as a pass.',
         expectedOutcome: '429 Too Many Requests — rate limiter intervenes',
-        asvs: 'V2.1 — brute-force and credential stuffing mitigated by rate limiting',
+        asvs: 'V6.3.1 — General Authentication Security: brute-force and credential stuffing mitigated by rate limiting',
         passLabel: '✓ Rate Limited', failLabel: '✗ Rate Limiter Not Triggered',
         async run() {
             const log = [];
@@ -491,7 +491,7 @@ async function runTest(t) {
         const { status, body, pass, label } = await t.run();
 
         // Server-returned JSON may contain user-supplied data (e.g. the username
-        // echoed back), so render it with textContent not innerHTML. ASVS V5.3.3.
+        // echoed back), so render it with textContent not innerHTML. ASVS V1 — Encoding and Sanitization.
         resEl.textContent = 'HTTP ' + status + '\n' + JSON.stringify(body, null, 2);
         resEl.classList.add('show');
 

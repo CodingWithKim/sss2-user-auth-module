@@ -48,7 +48,7 @@ def _write_to_db(
     The session is opened independently of the request's session so that an
     in-progress transaction rollback in the caller cannot discard the log entry —
     the audit record is committed before the error response is sent.
-    ASVS V1.7.2 — log integrity must be maintained even when the request fails.
+    ASVS V16 — Security Logging and Error Handling: log integrity must be maintained even when the request fails.
     """
     # Imported here to avoid a circular import: logger is imported by auth and main,
     # which are themselves imported during app initialisation before the DB is ready.
@@ -105,8 +105,8 @@ def log_event(
 
     Fields deliberately absent: passwords, tokens, email addresses, session IDs.
     If you ever need to debug a specific token, log its jti claim instead.
-    ASVS V7.1.1 — sensitive fields are never logged.
-    ASVS V7.1.2 — all authentication events are logged regardless of outcome.
+    ASVS V16 — Security Logging and Error Handling: sensitive fields (passwords, tokens,
+    PII) are never logged; all authentication events are recorded regardless of outcome.
     """
     entry = {
         "timestamp":   datetime.now(timezone.utc).isoformat(),

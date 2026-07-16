@@ -66,7 +66,7 @@ async def rate_limit_handler(_request: Request, _exc: RateLimitExceeded):
 
 
 # V4 ADDED: Catch-all for any unhandled exception. Returns a generic message so
-# stack traces and internal details never leak to the client. ASVS V1.7.2.
+# stack traces and internal details never leak to the client. ASVS V16 — Security Logging and Error Handling.
 @app.exception_handler(Exception)
 async def global_error_handler(_request: Request, _exc: Exception):
     return JSONResponse(
@@ -105,7 +105,7 @@ def register(user_data: UserRegister, db: Session = Depends(get_db)):
         )
 
     # Password is hashed by hash_password() before hitting the DB — the raw string
-    # never gets written anywhere. ASVS V2.4.1.
+    # never gets written anywhere. ASVS V6.2 — Password Security.
     # V5 ADDED: role is now taken from the request body (validated by Pydantic Literal)
     # rather than always defaulting to 'customer'.
     new_user = models.User(
@@ -173,7 +173,7 @@ def login(request: Request, credentials: UserLogin, response: Response, db: Sess
 
     # HttpOnly prevents JS from reading the cookie, which blocks XSS-based
     # token theft. SameSite=strict blocks CSRF. Secure=True enforces HTTPS in production.
-    # ASVS V3.4.2/3/5
+    # ASVS V3.3.4 (HttpOnly) / V3.3.2 (SameSite) / V3.3.1 (Secure) — Cookie Setup
     response.set_cookie(
         key="refresh_token",
         value=new_refresh_token,
@@ -208,7 +208,7 @@ def refresh_token(request: Request, response: Response, db: Session = Depends(ge
     The client never touches the refresh token directly —
     the browser just sends the cookie automatically with every request to this URL.
     Checks the blacklist before issuing, and immediately blacklists the
-    old refresh token after rotation so it can't be reused. ASVS V3.3.3.
+    old refresh token after rotation so it can't be reused. ASVS V7.4.1 — Session Termination.
     NEW: emits an audit log on successful token refresh.
     """
     ip = request.client.host if request.client else "unknown"
@@ -258,7 +258,7 @@ def refresh_token(request: Request, response: Response, db: Session = Depends(ge
 
     # Blacklist the old refresh token immediately after issuing a new one.
     # jti is guaranteed non-None at this point (we raised above if it was missing).
-    # ASVS V3.3.3 — rotation means each refresh token is single-use.
+    # ASVS V7.4.1 — Session Termination: rotation means each refresh token is single-use.
     expires_at = datetime.fromtimestamp(payload.get("exp"), tz=timezone.utc)
     blacklist_token(jti, expires_at, db)
 
@@ -286,7 +286,7 @@ def logout(request: Request, response: Response, db: Session = Depends(get_db)):
     """
     Clear the refresh token cookie from the browser, and blacklist the refresh
     token server-side so even a captured token string becomes useless immediately.
-    ASVS V3.3.1.
+    ASVS V7.4.1 — Session Termination.
     NEW: emits an audit log on logout.
     """
     ip = request.client.host if request.client else "unknown"
@@ -321,7 +321,7 @@ def admin_dashboard(current_user: models.User = Depends(require_role("admin"))):
     """
     V4 ADDED: Admin-only endpoint. require_role("admin") rejects anyone whose role
     is not "admin" with a 403 before the function body runs — deny by default.
-    ASVS V4.1.1/4.1.3.
+    ASVS V8.2.1 / V8.3.1 — General Authorization Design / Operation Level Authorization.
     """
     return {
         "message": f"Welcome to the admin dashboard, {current_user.username}",
@@ -334,7 +334,7 @@ def support_users(current_user: models.User = Depends(require_role("admin", "sup
     """
     V4 ADDED: Admin and support staff can access this endpoint; customers cannot.
     Passing multiple roles to require_role() is the idiomatic way to express
-    "any of these roles is acceptable." ASVS V4.1.1.
+    "any of these roles is acceptable." ASVS V8.2.1 — General Authorization Design.
     """
     users = []
     return {

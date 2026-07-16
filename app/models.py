@@ -19,7 +19,7 @@ class User(Base):
     username = Column(String, unique=True, nullable=False, index=True)
     email = Column(String, unique=True, nullable=False, index=True)
 
-    # Stores a bcrypt hash — never the raw password. ASVS V2.4.1.
+    # Stores a bcrypt hash — never the raw password. ASVS V6.2 — Password Security.
     hashed_password = Column(String, nullable=False)
 
     # 'customer' is the least-privileged role; admins will be seeded separately.
@@ -35,7 +35,7 @@ class TokenBlacklist(Base):
     V3 ADDED: Tracks revoked refresh tokens so that logout is truly terminal.
     In v2, logout only cleared the browser cookie — a captured token string
     remained valid until expiry. This table closes that gap.
-    ASVS V3.3.1 — server-side session invalidation.
+    ASVS V7.4.1 — Session Termination: server-side invalidation of revoked tokens.
     """
     __tablename__ = "token_blacklist"
 
@@ -62,7 +62,7 @@ class AuditLog(Base):
 
     SQLite doesn't enforce column lengths the way PostgreSQL does, but the limits
     are documented here so a future migration won't silently truncate values.
-    ASVS V1.7.2 — a centralised audit log that cannot be cleared by application code.
+    ASVS V16 — Security Logging and Error Handling: centralised audit log that cannot be cleared by application code.
     """
     __tablename__ = "audit_log"
 
